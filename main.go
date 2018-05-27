@@ -13,55 +13,66 @@ import (
 )
 
 func main() {
-	core.ErrorIcon = "X"
-	core.HelpIcon = "????"
-	core.QuestionIcon = "?"
-	core.SelectFocusIcon = ">"
-	core.MarkedOptionIcon = "[x]"
-	core.UnmarkedOptionIcon = "[ ]"
+	configSurveyIconsCompat()
 
+	client := createDockerClient()
+	ids := getContainerIds(client)
+	chosenShortId := promptUserForContainerId(ids)
+	ifaces := getInterfacesInContainer(client, chosenShortId)
+	chosenIface := promptUserForInterface(ifaces)
+
+	log.Printf("Chosen interface: %s\n", chosenIface)
+}
+
+func createDockerClient() (*docker.Client) {
 	var dockerEndpoint = flag.String("endpoint", "unix:///var/run/docker.sock", "Docker endpoint to use")
 	flag.Parse()
 	client, err := docker.NewClient(*dockerEndpoint)
 	if err != nil {
 		log.Fatal(err)
 	}
+	return client
+}
 
+func getContainerIds(client *docker.Client) []string {
 	containers, err := client.ListContainers(docker.ListContainersOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	if len(containers) == 0 {
 		fmt.Printf("No containers are running, nothing to do here!")
 		os.Exit(0)
 	}
-
 	var ids []string
 	for _, c := range containers {
 		ids = append(ids, c.ID[:12])
 	}
+	return ids
+}
 
+func promptUserForContainerId(ids []string) (string) {
 	chosenShortId := ""
 	prompt := &survey.Select{
 		Message: "Select a container to listen to:",
 		Options: ids,
 	}
-	err = survey.AskOne(prompt, &chosenShortId, nil)
+	err := survey.AskOne(prompt, &chosenShortId, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	if chosenShortId == "" {
 		log.Fatal("No container chosen")
 	}
+	return chosenShortId
+}
 
+func getInterfacesInContainer(client *docker.Client, chosenShortId string) []string {
 	exec, err := client.CreateExec(docker.CreateExecOptions{
 		AttachStderr: true,
 		AttachStdout: true,
-		Tty: true,
-		Cmd:       []string{"ls", "/sys/class/net"},
-		Container: chosenShortId,
+		Tty:          true,
+		Cmd:          []string{"ls", "/sys/class/net"},
+		Container:    chosenShortId,
 	})
 	if err != nil {
 		log.Fatalf("Couldn't create Exec: %v", err)
@@ -75,21 +86,31 @@ func main() {
 	if buferr.Len() > 0 {
 		log.Fatalf("Couldn't read container's interfaces: %s", buferr.String())
 	}
-
 	ifaces := strings.Split(strings.Replace(bufout.String(), "  ", " ", -1), " ")
 	for idx, i := range ifaces {
 		ifaces[idx] = strings.Trim(i, "\n")
 	}
+	return ifaces
+}
 
+func promptUserForInterface(ifaces []string) string {
 	chosenIface := ""
-	prompt = &survey.Select{
+	prompt := &survey.Select{
 		Message: "Select an interface to listen to:",
 		Options: ifaces,
 	}
-	err = survey.AskOne(prompt, &chosenIface, nil)
+	err := survey.AskOne(prompt, &chosenIface, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
+	return chosenIface
+}
 
-	log.Printf("Chosen interface: %s\n", chosenIface)
+func configSurveyIconsCompat() {
+	core.ErrorIcon = "X"
+	core.HelpIcon = "????"
+	core.QuestionIcon = "?"
+	core.SelectFocusIcon = ">"
+	core.MarkedOptionIcon = "[x]"
+	core.UnmarkedOptionIcon = "[ ]"
 }
