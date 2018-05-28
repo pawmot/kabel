@@ -10,18 +10,59 @@ import (
 	"os"
 	"strings"
 	"gopkg.in/AlecAivazis/survey.v1/core"
+	"time"
+	"strconv"
 )
 
 func main() {
 	configSurveyIconsCompat()
 
 	client := createDockerClient()
+	ch := make(chan struct{})
+	go func() {
+		imageName := "pawmot/tcpdump"
+		var buf bytes.Buffer
+		pullOpts := docker.PullImageOptions{
+			Repository:   imageName,
+			OutputStream: &buf,
+		}
+		err := client.PullImage(pullOpts, docker.AuthConfiguration{})
+		if err != nil {
+			log.Fatalf("Pull output: %s", buf.String())
+		}
+		ch <- struct{}{}
+	}()
 	ids := getContainerIds(client)
 	chosenShortId := promptUserForContainerId(ids)
 	ifaces := getInterfacesInContainer(client, chosenShortId)
 	chosenIface := promptUserForInterface(ifaces)
 
 	log.Printf("Chosen interface: %s\n", chosenIface)
+
+	<-ch
+
+	container, err := client.CreateContainer(docker.CreateContainerOptions{
+		Name: "tcpdump-" + chosenShortId + "-" + chosenIface + "-" + strconv.FormatInt(time.Now().Unix(), 10),
+		Config: &docker.Config{
+			Image: "pawmot/tcpdump",
+			Env: []string{
+				"IF=" + chosenIface,
+			},
+		},
+		HostConfig: &docker.HostConfig{
+			NetworkMode: "container:" + chosenShortId,
+		},
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = client.StartContainer(container.ID, container.HostConfig)
+
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func createDockerClient() (*docker.Client) {
