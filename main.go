@@ -19,26 +19,39 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"os/exec"
+	"io/ioutil"
+	"github.com/phayes/freeport"
 )
 
 func main() {
 	configSurveyIconsCompat()
 
-	client := createDockerClient()
+	dockerClient, sshPidCh := createDockerClient()
+	sshPid := <-sshPidCh
+	log.Printf("Using SSH pid %d\n", sshPid)
+	if sshPid != -1 {
+		time.Sleep(20 * time.Second)
+	}
 	ch := make(chan struct{})
 	go func() {
 		imageName := "pawmot/tcpdump"
 		ctx := context.Background()
-		resp, err := client.ImagePull(ctx, imageName, types.ImagePullOptions{})
+		resp, err := dockerClient.ImagePull(ctx, imageName, types.ImagePullOptions{})
 		if err != nil {
 			log.Fatal(err)
 		}
-		resp.Close()
+		defer resp.Close()
+		str, err := ioutil.ReadAll(resp)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		log.Println(string(str))
 		ch <- struct{}{}
 	}()
-	ids := getContainerIds(client)
+	ids := getContainerIds(dockerClient)
 	chosenShortId := promptUserForContainerId(ids)
-	ifaces := getInterfacesInContainer(client, chosenShortId)
+	ifaces := getInterfacesInContainer(dockerClient, chosenShortId)
 	chosenIface := promptUserForInterface(ifaces)
 
 	log.Printf("Chosen container id: %s\n", chosenShortId)
@@ -48,7 +61,7 @@ func main() {
 
 	ctx := context.Background()
 	name := "tcpdump-" + chosenShortId + "-" + chosenIface + "-" + strconv.FormatInt(time.Now().Unix(), 10)
-	tdContainer, err := client.ContainerCreate(ctx, &container.Config{
+	tdContainer, err := dockerClient.ContainerCreate(ctx, &container.Config{
 		Image:        "pawmot/tcpdump",
 		Env: []string {
 			"IF=" + chosenIface,
@@ -102,7 +115,7 @@ func main() {
 
 	log.Println("Attaching...")
 	attCtx := context.Background()
-	resp, err := client.ContainerAttach(attCtx, tdContainer.ID, types.ContainerAttachOptions{
+	resp, err := dockerClient.ContainerAttach(attCtx, tdContainer.ID, types.ContainerAttachOptions{
 		//Logs:   true,
 		Stdout: true,
 		Stderr: true,
@@ -115,7 +128,7 @@ func main() {
 		stdcopy.StdCopy(fifo, os.Stderr, resp.Reader)
 	}()
 
-	err = client.ContainerStart(ctx, tdContainer.ID, types.ContainerStartOptions{})
+	err = dockerClient.ContainerStart(ctx, tdContainer.ID, types.ContainerStartOptions{})
 
 	if err != nil {
 		log.Fatal(err)
@@ -127,7 +140,7 @@ func main() {
 	log.Println("WireShark closed, cleaning up!")
 
 	dur := 30 * time.Second
-	err = client.ContainerStop(ctx, tdContainer.ID, &dur)
+	err = dockerClient.ContainerStop(ctx, tdContainer.ID, &dur)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -137,22 +150,75 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if sshPid != -1 {
+		err := syscall.Kill(sshPid, syscall.SIGTERM)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	log.Println("Cleanup completed, bye!")
 }
 
-func createDockerClient() (*client.Client) {
+func createDockerClient() (*client.Client, <-chan int) {
+	var ssh = flag.String("ssh", "", "user@host of the machine that the docker daemon runs on")
+	var sshPort = flag.Int("P", 22, "Port to use with ssh")
 	var dockerEndpoint = flag.String("endpoint", "unix:///var/run/docker.sock", "Docker endpoint to use")
 	flag.Parse()
-	apiClient, err := client.NewClientWithOpts(client.WithHost(*dockerEndpoint))
+	var effectiveEnpoint string
+	var ch <-chan int
+	if len(*ssh) > 0 {
+		effectiveEnpoint, ch = createSshTunnel(*ssh, *sshPort, *dockerEndpoint)
+	} else {
+		var ch1 = make(chan int, 1)
+		ch1 <- -1
+		ch = ch1
+		effectiveEnpoint = *dockerEndpoint
+	}
+	apiClient, err := client.NewClientWithOpts(client.WithHost(effectiveEnpoint))
 	if err != nil {
 		log.Fatal(err)
 	}
-	return apiClient
+	return apiClient, ch
 }
 
-func getContainerIds(client *client.Client) []string {
+func createSshTunnel(sshSpec string, sshPort int, dockerEndpoint string) (string, <-chan int) {
+	localPort, err := freeport.GetFreePort()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ch := make(chan int)
+
+	go func() {
+		log.Println("Running SSH to on local port " + strconv.Itoa(localPort) + "!")
+		cmd := exec.Command("/usr/bin/ssh", "-p", strconv.Itoa(sshPort), "-Llocalhost:" + strconv.Itoa(localPort) + ":/var/run/docker.sock", sshSpec, "-N")
+		err = cmd.Start()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		ch <- cmd.Process.Pid
+
+		if err := cmd.Wait(); err != nil {
+			if exiterr, ok := err.(*exec.ExitError); ok {
+				if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
+					log.Printf("Exit Status: %d", status.ExitStatus())
+				}
+			} else {
+				log.Fatalf("cmd.Wait: %v", err)
+			}
+		} else {
+			log.Println("SSH exited normally")
+		}
+	}()
+
+	return "tcp://localhost:" + strconv.Itoa(localPort), ch
+}
+
+func getContainerIds(dockerClient *client.Client) []string {
 	ctx := context.Background()
-	containers, err := client.ContainerList(ctx, types.ContainerListOptions{})
+	containers, err := dockerClient.ContainerList(ctx, types.ContainerListOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -184,9 +250,9 @@ func promptUserForContainerId(ids []string) (string) {
 	return chosenShortId
 }
 
-func getInterfacesInContainer(client *client.Client, chosenShortId string) []string {
+func getInterfacesInContainer(dockerClient *client.Client, chosenShortId string) []string {
 	ctx := context.Background()
-	exec, err := client.ContainerExecCreate(ctx, chosenShortId, types.ExecConfig{
+	exec, err := dockerClient.ContainerExecCreate(ctx, chosenShortId, types.ExecConfig{
 		AttachStderr: true,
 		AttachStdout: true,
 		Tty:          true,
@@ -197,7 +263,7 @@ func getInterfacesInContainer(client *client.Client, chosenShortId string) []str
 	}
 	bufout := bytes.NewBufferString("")
 	buferr := bytes.NewBufferString("")
-	resp, err := client.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{Detach: false, Tty: false})
+	resp, err := dockerClient.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{Detach: false, Tty: false})
 	if err != nil {
 		log.Fatalf("Couldn't start Exec: %v", err)
 	}
