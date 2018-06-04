@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"github.com/fsouza/go-dockerclient"
 	"log"
 	"gopkg.in/AlecAivazis/survey.v1"
 	"bytes"
@@ -12,6 +11,14 @@ import (
 	"gopkg.in/AlecAivazis/survey.v1/core"
 	"time"
 	"strconv"
+	"syscall"
+	"github.com/docker/docker/client"
+	"context"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
+	"os/exec"
 )
 
 func main() {
@@ -21,15 +28,12 @@ func main() {
 	ch := make(chan struct{})
 	go func() {
 		imageName := "pawmot/tcpdump"
-		var buf bytes.Buffer
-		pullOpts := docker.PullImageOptions{
-			Repository:   imageName,
-			OutputStream: &buf,
-		}
-		err := client.PullImage(pullOpts, docker.AuthConfiguration{})
+		ctx := context.Background()
+		resp, err := client.ImagePull(ctx, imageName, types.ImagePullOptions{})
 		if err != nil {
-			log.Fatalf("Pull output: %s", buf.String())
+			log.Fatal(err)
 		}
+		resp.Close()
 		ch <- struct{}{}
 	}()
 	ids := getContainerIds(client)
@@ -37,46 +41,118 @@ func main() {
 	ifaces := getInterfacesInContainer(client, chosenShortId)
 	chosenIface := promptUserForInterface(ifaces)
 
+	log.Printf("Chosen container id: %s\n", chosenShortId)
 	log.Printf("Chosen interface: %s\n", chosenIface)
 
 	<-ch
 
-	container, err := client.CreateContainer(docker.CreateContainerOptions{
-		Name: "tcpdump-" + chosenShortId + "-" + chosenIface + "-" + strconv.FormatInt(time.Now().Unix(), 10),
-		Config: &docker.Config{
-			Image: "pawmot/tcpdump",
-			Env: []string{
-				"IF=" + chosenIface,
-			},
+	ctx := context.Background()
+	name := "tcpdump-" + chosenShortId + "-" + chosenIface + "-" + strconv.FormatInt(time.Now().Unix(), 10)
+	tdContainer, err := client.ContainerCreate(ctx, &container.Config{
+		Image:        "pawmot/tcpdump",
+		Env: []string {
+			"IF=" + chosenIface,
 		},
-		HostConfig: &docker.HostConfig{
-			NetworkMode: "container:" + chosenShortId,
-		},
+		AttachStdout: true,
+		AttachStderr: true,
+	}, &container.HostConfig{
+		NetworkMode:   container.NetworkMode("container:" + chosenShortId),
+		AutoRemove:    true,
+		DNS:           []string{},
+		DNSOptions:    []string{},
+		DNSSearch:     []string{},
+		RestartPolicy: container.RestartPolicy{Name: "no", MaximumRetryCount: 0},
+	}, &network.NetworkingConfig{
+
+	}, name)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fifoName := "/tmp/" + name
+	err = syscall.Mkfifo(fifoName, 0666)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println("Will dump TCP to '" + fifoName + "'")
+
+	wsClosed := make(chan struct{})
+	go func() {
+		log.Println("Running WireShark on '" + fifoName + "'!")
+		cmd := exec.Command("/usr/bin/wireshark", "-k", "-i", fifoName)
+		err = cmd.Start()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		cmd.Wait()
+		wsClosed <- struct{}{}
+	}()
+
+	fifo, err := os.OpenFile(fifoName, syscall.O_WRONLY, 0600)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println("WireShark connected!")
+
+	log.Println("Attaching...")
+	attCtx := context.Background()
+	resp, err := client.ContainerAttach(attCtx, tdContainer.ID, types.ContainerAttachOptions{
+		//Logs:   true,
+		Stdout: true,
+		Stderr: true,
+		Stream: true,
 	})
+	log.Println("Attach goroutine finished...")
+	defer resp.Close()
+
+	go func() {
+		stdcopy.StdCopy(fifo, os.Stderr, resp.Reader)
+	}()
+
+	err = client.ContainerStart(ctx, tdContainer.ID, types.ContainerStartOptions{})
 
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = client.StartContainer(container.ID, container.HostConfig)
+	log.Println("Continuing!")
+	<-wsClosed
 
+	log.Println("WireShark closed, cleaning up!")
+
+	dur := 30 * time.Second
+	err = client.ContainerStop(ctx, tdContainer.ID, &dur)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	err = os.Remove(fifoName)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println("Cleanup completed, bye!")
 }
 
-func createDockerClient() (*docker.Client) {
+func createDockerClient() (*client.Client) {
 	var dockerEndpoint = flag.String("endpoint", "unix:///var/run/docker.sock", "Docker endpoint to use")
 	flag.Parse()
-	client, err := docker.NewClient(*dockerEndpoint)
+	apiClient, err := client.NewClientWithOpts(client.WithHost(*dockerEndpoint))
 	if err != nil {
 		log.Fatal(err)
 	}
-	return client
+	return apiClient
 }
 
-func getContainerIds(client *docker.Client) []string {
-	containers, err := client.ListContainers(docker.ListContainersOptions{})
+func getContainerIds(client *client.Client) []string {
+	ctx := context.Background()
+	containers, err := client.ContainerList(ctx, types.ContainerListOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -85,6 +161,7 @@ func getContainerIds(client *docker.Client) []string {
 		os.Exit(0)
 	}
 	var ids []string
+	// TODO that list should contain names, not only IDs
 	for _, c := range containers {
 		ids = append(ids, c.ID[:12])
 	}
@@ -107,23 +184,25 @@ func promptUserForContainerId(ids []string) (string) {
 	return chosenShortId
 }
 
-func getInterfacesInContainer(client *docker.Client, chosenShortId string) []string {
-	exec, err := client.CreateExec(docker.CreateExecOptions{
+func getInterfacesInContainer(client *client.Client, chosenShortId string) []string {
+	ctx := context.Background()
+	exec, err := client.ContainerExecCreate(ctx, chosenShortId, types.ExecConfig{
 		AttachStderr: true,
 		AttachStdout: true,
 		Tty:          true,
 		Cmd:          []string{"ls", "/sys/class/net"},
-		Container:    chosenShortId,
 	})
 	if err != nil {
 		log.Fatalf("Couldn't create Exec: %v", err)
 	}
 	bufout := bytes.NewBufferString("")
 	buferr := bytes.NewBufferString("")
-	err = client.StartExec(exec.ID, docker.StartExecOptions{OutputStream: bufout, ErrorStream: buferr})
+	resp, err := client.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{Detach: false, Tty: false})
 	if err != nil {
 		log.Fatalf("Couldn't start Exec: %v", err)
 	}
+	defer resp.Close()
+	stdcopy.StdCopy(bufout, buferr, resp.Reader)
 	if buferr.Len() > 0 {
 		log.Fatalf("Couldn't read container's interfaces: %s", buferr.String())
 	}
