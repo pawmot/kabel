@@ -30,7 +30,7 @@ func main() {
 	sshPid := <-sshPidCh
 	log.Printf("Using SSH pid %d\n", sshPid)
 	if sshPid != -1 {
-		time.Sleep(20 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 	ch := make(chan struct{})
 	go func() {
