@@ -1,0 +1,38 @@
+name: kabel
+version: '0.1'
+summary: Kabel is a tool for sniffing Docker containers' traffic
+description: |
+  Kabel's mission is to simplify listening to a Docker container's traffic
+  in Wireshark. It let's you connect to a local or remote Docker engine, pick a
+  container and network interface, and then starts a Wireshark instances connected
+  to that particular interface.
+
+grade: devel # must be 'stable' to release into candidate/stable channels
+confinement: devmode # use 'strict' once you have the right plugs and slots
+
+plugs:
+  gnome-3-26-1604:
+    interface: content
+    target: gnome-platform
+    default-provider: gnome-3-26-1604:gnome-3-26-1604
+
+apps:
+  kabel:
+    command: bin/desktop-launch $SNAP/bin/kabel
+    plugs: [x11, gnome-3-26-1604]
+
+parts:
+  kabel:
+    source: .
+    plugin: dump
+    organize:
+      kabel: bin/kabel
+    stage:
+    - bin/kabel
+    after: [desktop-gnome-platform]
+
+  wireshark:
+    source: ./deps
+    plugin: dump
+    organize:
+      wireshark: bin/wireshark

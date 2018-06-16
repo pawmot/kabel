@@ -34,6 +34,7 @@ func main() {
 	}
 	ch := make(chan struct{})
 	go func() {
+		log.Println("Pulling pawmot/tcpdump...")
 		imageName := "pawmot/tcpdump"
 		ctx := context.Background()
 		resp, err := dockerClient.ImagePull(ctx, imageName, types.ImagePullOptions{})
@@ -41,14 +42,15 @@ func main() {
 			log.Fatal(err)
 		}
 		defer resp.Close()
-		str, err := ioutil.ReadAll(resp)
+		_, err = ioutil.ReadAll(resp)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		log.Println(string(str))
+		log.Println("Pulled pawmot/tcpdump")
 		ch <- struct{}{}
 	}()
+	<-ch
 	ids := getContainerIds(dockerClient)
 	chosenShortId := promptUserForContainerId(ids)
 	ifaces := getInterfacesInContainer(dockerClient, chosenShortId)
@@ -57,7 +59,6 @@ func main() {
 	log.Printf("Chosen container id: %s\n", chosenShortId)
 	log.Printf("Chosen interface: %s\n", chosenIface)
 
-	<-ch
 
 	ctx := context.Background()
 	name := "tcpdump-" + chosenShortId + "-" + chosenIface + "-" + strconv.FormatInt(time.Now().Unix(), 10)
@@ -95,12 +96,13 @@ func main() {
 	wsClosed := make(chan struct{})
 	go func() {
 		log.Println("Running WireShark on '" + fifoName + "'!")
-		cmd := exec.Command("/usr/bin/wireshark", "-k", "-i", fifoName)
+		cmd := exec.Command("wireshark", "-k", "-i", fifoName)
 		err = cmd.Start()
 		if err != nil {
 			log.Fatal(err)
 		}
 
+		log.Println("WireShark running, waiting to be closed...")
 		cmd.Wait()
 		wsClosed <- struct{}{}
 	}()
@@ -256,7 +258,7 @@ func getInterfacesInContainer(dockerClient *client.Client, chosenShortId string)
 		AttachStderr: true,
 		AttachStdout: true,
 		Tty:          true,
-		Cmd:          []string{"ls", "/sys/class/net"},
+		Cmd:          []string{"ls", "--color=never", "/sys/class/net"},
 	})
 	if err != nil {
 		log.Fatalf("Couldn't create Exec: %v", err)
