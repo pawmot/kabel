@@ -20,13 +20,15 @@ const (
 type Actor struct {
 	sshPid  int
 	state   state
-	actionc chan func()
+	actionC chan func()
 }
 
 func NewSshActor() *Actor {
+	actionC := make(chan func())
 	actor := Actor{
-		sshPid: -1,
-		state:  disconnected,
+		sshPid:  -1,
+		state:   disconnected,
+		actionC: actionC,
 	}
 
 	go actor.handleMessages()
@@ -36,7 +38,7 @@ func NewSshActor() *Actor {
 
 func (a *Actor) handleMessages() {
 	for {
-		f := <-a.actionc
+		f := <-a.actionC
 		f()
 	}
 }
@@ -44,7 +46,7 @@ func (a *Actor) handleMessages() {
 func (a *Actor) CreateTunnel(remoteSpec string) (local sniffer.SshTunnelLocalPort, err error) {
 	portC := make(chan int)
 	errC := make(chan error)
-	a.actionc <- func() {
+	a.actionC <- func() {
 		if a.state == disconnected {
 			p, err := a.tunnel(remoteSpec)
 			if err != nil {
@@ -66,13 +68,14 @@ func (a *Actor) CreateTunnel(remoteSpec string) (local sniffer.SshTunnelLocalPor
 
 func (a *Actor) Close() error {
 	errC := make(chan error)
-	a.actionc <- func() {
+	a.actionC <- func() {
 		if a.state == connected {
 			err := syscall.Kill(a.sshPid, syscall.SIGTERM)
 			if err != nil {
 				errC <- err
 				return
 			}
+			log.Println("SSH tunnel closed")
 		}
 
 		close(errC)

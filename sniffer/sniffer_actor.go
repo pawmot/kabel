@@ -24,6 +24,7 @@ type Actor struct {
 	wiresharkClient  WiresharkClient
 	actionc          chan func()
 	quitc            chan chan struct{}
+	closedC          chan struct{}
 	Logs             <-chan string
 	logs             chan<- string
 	err              chan error
@@ -77,9 +78,15 @@ func (sa *Actor) guardedExec(f func()) {
 }
 
 func (sa *Actor) close() {
-	sa.sshClient.Close()
+	log.Println("Cleanup in progress...")
+	err := sa.sshClient.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 	if sa.state == sniffing {
 		sa.hijackedResponse.Close()
+		log.Println("Hijacked response closed")
+
 		if sa.snifferId != "" {
 			dur := 30 * time.Second
 			err := sa.dockerIface.ContainerStop(context.Background(), sa.snifferId, dur)
@@ -88,14 +95,20 @@ func (sa *Actor) close() {
 			}
 		}
 
+		log.Println("Sniffer container stopped")
+
 		if sa.fifoPath != "" {
 			err := os.Remove(sa.fifoPath)
 			if err != nil {
 				log.Fatal(err)
 			}
 		}
+
+		log.Println("Fifo " + sa.fifoPath + " removed")
 	}
 	sa.state = closed
+	log.Println("Cleanup complete!")
+	close(sa.closedC)
 }
 
 func (sa *Actor) ensureState(s state) error {

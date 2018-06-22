@@ -26,6 +26,7 @@ func TunneledConnectionRequest(dockerEndpointOnRemoteHost string, sshSpec string
 	}
 }
 
+// TODO this is not needed, remove
 type ConnectionResponse int
 
 const (

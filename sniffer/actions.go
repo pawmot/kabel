@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"github.com/docker/docker/pkg/stdcopy"
 	"context"
+	"errors"
 )
 
 func (sa *Actor) Close() error {
@@ -61,7 +62,7 @@ func (sa *Actor) Connect(request ConnectionRequest) (ConnectionResponse, error) 
 	}
 }
 
-func (sa* Actor) PullImage() error {
+func (sa *Actor) PullImage() error {
 	errC := make(chan error)
 	sa.actionc <- func() {
 		err := sa.ensureState(connected)
@@ -79,7 +80,7 @@ func (sa* Actor) PullImage() error {
 	return <-errC
 }
 
-func (sa* Actor) GetContainers() ([]Container, error) {
+func (sa *Actor) GetContainers() ([]Container, error) {
 	respC := make(chan []Container)
 	errC := make(chan error)
 	sa.actionc <- func() {
@@ -103,7 +104,7 @@ func (sa* Actor) GetContainers() ([]Container, error) {
 	}
 }
 
-func (sa* Actor) GetNetworkInterfaces(containerId string) ([]NetworkInterface, error) {
+func (sa *Actor) GetNetworkInterfaces(containerId string) ([]NetworkInterface, error) {
 	respC := make(chan []NetworkInterface)
 	errC := make(chan error)
 	sa.actionc <- func() {
@@ -127,12 +128,18 @@ func (sa* Actor) GetNetworkInterfaces(containerId string) ([]NetworkInterface, e
 	}
 }
 
-func (sa *Actor) Sniff(containerIdToSniff string, interfaceName string) (error) {
+func (sa *Actor) Sniff(containerIdToSniff string, interfaceName string) (<-chan struct{}, error) {
+	closedChanC := make(chan chan struct{})
 	errC := make(chan error)
 	sa.actionc <- func() {
 		err := sa.ensureState(connected)
 		if err != nil {
 			errC <- err
+			return
+		}
+
+		if sa.state == sniffing {
+			errC <- errors.New("already sniffing")
 			return
 		}
 
@@ -185,7 +192,15 @@ func (sa *Actor) Sniff(containerIdToSniff string, interfaceName string) (error) 
 
 		log.Println("Continuing!")
 		sa.state = sniffing
-		close(errC)
+		ch := make(chan struct{})
+		sa.closedC = ch
+		closedChanC <- ch
 	}
-	return <-errC
+
+	select {
+	case ch := <-closedChanC:
+		return ch, nil
+	case err := <-errC:
+		return nil, err
+	}
 }
