@@ -1,11 +1,22 @@
 package sniffer
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"time"
+	"golang.org/x/sys/unix"
+	"log"
+	"os"
+	"syscall"
+	"github.com/docker/docker/pkg/stdcopy"
+	"context"
+)
 
 func (sa *Actor) Close() error {
-	sa.quitc <- struct{}{}
+	ch := make(chan struct{})
+	sa.quitc <- ch
 	select {
-	case <-sa.quitc:
+	case <-ch:
 		return nil
 
 	case err := <-sa.err:
@@ -58,7 +69,7 @@ func (sa* Actor) PullImage() error {
 			errC <- err
 			return
 		}
-		err = sa.dockerIface.PullImage("pawmot/tcpdump")
+		err = sa.dockerIface.PullTcpDumpImage()
 		if err != nil {
 			errC <- err
 		} else {
@@ -116,6 +127,65 @@ func (sa* Actor) GetNetworkInterfaces(containerId string) ([]NetworkInterface, e
 	}
 }
 
-func (sa *Actor) CreateSnifferContainer(containerId string, interfaceName string) (error) {
-	return nil
+func (sa *Actor) Sniff(containerIdToSniff string, interfaceName string) (error) {
+	errC := make(chan error)
+	sa.actionc <- func() {
+		err := sa.ensureState(connected)
+		if err != nil {
+			errC <- err
+			return
+		}
+
+		name := "tcpdump-" + containerIdToSniff + "-" + interfaceName + "-" + strconv.FormatInt(time.Now().Unix(), 10)
+		snifferId, err := sa.dockerIface.CreateTcpDumpContainer(name, containerIdToSniff, interfaceName)
+		sa.snifferId = snifferId
+
+		fifoPath := "/tmp/" + name
+		unix.Mkfifo(fifoPath, 0666)
+
+		sa.fifoPath = fifoPath
+		closedC := make(chan struct{})
+		sa.wiresharkClient.Open(fifoPath, closedC)
+
+		go func() {
+			<-closedC
+			log.Println("Wireshark closed, tearing everything down!")
+			sa.Close()
+		}()
+
+		fifo, err := os.OpenFile(fifoPath, syscall.O_WRONLY, 0600)
+
+		if err != nil {
+			errC <- err
+			return
+		}
+
+		log.Println("WireShark connected!")
+
+		log.Println("Attaching...")
+		ctx := context.Background()
+		resp, err := sa.dockerIface.ContainerAttach(ctx, snifferId)
+		if err != nil {
+			errC <- err
+			return
+		}
+		log.Println("Attach goroutine finished...")
+
+		sa.hijackedResponse = &resp
+		go func() {
+			stdcopy.StdCopy(fifo, os.Stderr, resp.Reader)
+		}()
+
+		err = sa.dockerIface.ContainerStart(ctx, snifferId)
+
+		if err != nil {
+			errC <- err
+			return
+		}
+
+		log.Println("Continuing!")
+		sa.state = sniffing
+		close(errC)
+	}
+	return <-errC
 }

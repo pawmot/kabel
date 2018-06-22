@@ -95,7 +95,7 @@ func main() {
 	wsClosed := make(chan struct{})
 	go func() {
 		log.Println("Running WireShark on '" + fifoName + "'!")
-		cmd := exec.Command("/usr/bin/wireshark", "-k", "-i", fifoName)
+		cmd := exec.Command("wireshark", "-k", "-i", fifoName)
 		err = cmd.Start()
 		if err != nil {
 			log.Fatal(err)
@@ -256,7 +256,7 @@ func getInterfacesInContainer(dockerClient *client.Client, chosenShortId string)
 		AttachStderr: true,
 		AttachStdout: true,
 		Tty:          true,
-		Cmd:          []string{"ls", "/sys/class/net"},
+		Cmd:          []string{"ls", "--color=none", "/sys/class/net"},
 	})
 	if err != nil {
 		log.Fatalf("Couldn't create Exec: %v", err)

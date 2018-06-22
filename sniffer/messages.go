@@ -36,10 +36,10 @@ const (
 type SshPassword string
 
 type Container struct {
-	name string
-	id   string
+	Name string
+	Id   string
 }
 
 type NetworkInterface struct {
-	name string
+	Name string
 }

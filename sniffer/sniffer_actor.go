@@ -2,38 +2,52 @@ package sniffer
 
 import (
 	"errors"
+	"github.com/docker/docker/api/types"
+	"time"
+	"log"
+	"os"
+	"context"
 )
 
 type state int
 
 const (
-	created state = iota
+	created   state = iota
 	connected
+	sniffing
 	closed
 )
 
 type Actor struct {
-	dockerIface DockerClient
-	sshClient   SshClient
-	actionc     chan func()
-	quitc       chan struct{}
-	Logs        <-chan string
-	logs        chan<- string
-	err         chan error
-	state       state
+	dockerIface      DockerClient
+	sshClient        SshClient
+	wiresharkClient  WiresharkClient
+	actionc          chan func()
+	quitc            chan chan struct{}
+	Logs             <-chan string
+	logs             chan<- string
+	err              chan error
+	state            state
+	hijackedResponse *types.HijackedResponse
+	snifferId        string
+	fifoPath         string
 }
 
-func NewSnifferActor(dockerInterface DockerClient, sshClient SshClient) *Actor {
+func NewSnifferActor(dockerInterface DockerClient, sshClient SshClient, wiresharkClient WiresharkClient) *Actor {
 	logs := make(chan string)
 	sa := Actor{
-		dockerIface: dockerInterface,
-		sshClient:   sshClient,
-		actionc:     make(chan func()),
-		quitc:       make(chan struct{}),
-		logs:        logs,
-		Logs:        logs,
-		err:         make(chan error),
-		state:       created,
+		dockerIface:      dockerInterface,
+		sshClient:        sshClient,
+		wiresharkClient:  wiresharkClient,
+		actionc:          make(chan func()),
+		quitc:            make(chan chan struct{}),
+		logs:             logs,
+		Logs:             logs,
+		err:              make(chan error),
+		state:            created,
+		hijackedResponse: nil,
+		snifferId:        "",
+		fifoPath:         "",
 	}
 
 	go sa.handleMessages()
@@ -46,9 +60,9 @@ func (sa *Actor) handleMessages() {
 		select {
 		case f := <-sa.actionc:
 			sa.guardedExec(f)
-		case <-sa.quitc:
+		case ch := <-sa.quitc:
 			sa.guardedExec(sa.close)
-			sa.quitc <- struct{}{}
+			close(ch)
 		}
 	}
 }
@@ -63,13 +77,30 @@ func (sa *Actor) guardedExec(f func()) {
 }
 
 func (sa *Actor) close() {
-	sa.state = closed
 	sa.sshClient.Close()
+	if sa.state == sniffing {
+		sa.hijackedResponse.Close()
+		if sa.snifferId != "" {
+			dur := 30 * time.Second
+			err := sa.dockerIface.ContainerStop(context.Background(), sa.snifferId, dur)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		if sa.fifoPath != "" {
+			err := os.Remove(sa.fifoPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+	sa.state = closed
 }
 
 func (sa *Actor) ensureState(s state) error {
 	if sa.state != s {
-		return errors.New("Wrong state")
+		return errors.New("wrong state")
 	} else {
 		return nil
 	}
