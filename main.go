@@ -27,12 +27,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ids := getContainerIds(sniff)
-	chosenShortId := promptUserForContainerId(ids)
+	containers := getContainers(sniff)
+	chosenName, chosenShortId := promptUserForContainer(containers)
 	ifaces := getInterfacesInContainer(sniff, chosenShortId)
 	chosenIface := promptUserForInterface(ifaces)
 
-	log.Printf("Chosen container id: %s\n", chosenShortId)
+	log.Printf("Chosen container: %s (id: %s)\n", chosenName, chosenShortId)
 	log.Printf("Chosen interface: %s\n", chosenIface)
 
 	closed, err := sniff.Sniff(chosenShortId, chosenIface)
@@ -61,7 +61,7 @@ func connect(s *sniffer.Actor) error {
 	return err
 }
 
-func getContainerIds(s *sniffer.Actor) []string {
+func getContainers(s *sniffer.Actor) []sniffer.Container {
 	containers, err := s.GetContainers()
 	if err != nil {
 		log.Fatal(err)
@@ -70,27 +70,39 @@ func getContainerIds(s *sniffer.Actor) []string {
 		fmt.Println("No containers are running, nothing to do here!")
 		os.Exit(0)
 	}
-	var ids []string
-	for _, c := range containers {
-		ids = append(ids, c.Id[:12])
-	}
-	return ids
+
+	return containers
 }
 
-func promptUserForContainerId(ids []string) (string) {
-	chosenShortId := ""
+func promptUserForContainer(containers []sniffer.Container) (name string, id string) {
+	var names []string
+
+	for _, c := range containers {
+		names = append(names, c.Name)
+	}
+
+	chosenName := ""
 	prompt := &survey.Select{
 		Message: "Select a container to listen to:",
-		Options: ids,
+		Options: names,
 	}
-	err := survey.AskOne(prompt, &chosenShortId, nil)
+	err := survey.AskOne(prompt, &chosenName, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if chosenShortId == "" {
+	if chosenName == "" {
 		log.Fatal("No container chosen")
 	}
-	return chosenShortId
+
+	var chosenShortId string
+	for _, c := range containers {
+		if c.Name == chosenName {
+			chosenShortId = c.Id[:12]
+			break
+		}
+	}
+
+	return chosenName, chosenShortId
 }
 
 func getInterfacesInContainer(s *sniffer.Actor, chosenShortId string) []string {
