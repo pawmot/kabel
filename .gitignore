@@ -4,3 +4,5 @@
 !LICENCE
 
 .idea
+/output
+bind_linux_amd64.go
