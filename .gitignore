@@ -2,6 +2,7 @@
 !*.*
 !*/
 !LICENCE
+!Makefile
 
 .idea
 /output

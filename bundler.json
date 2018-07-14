@@ -1,3 +1,9 @@
 {
-  "app_name": "Kabel"
+  "app_name": "Kabel",
+  "environments": [
+    {
+      "arch": "amd64",
+      "os": "linux"
+    }
+  ]
 }
