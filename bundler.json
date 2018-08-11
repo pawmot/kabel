@@ -1,5 +1,6 @@
 {
   "app_name": "Kabel",
+  "icon_path_linux": "resources/cable-512.png",
   "environments": [
     {
       "arch": "amd64",

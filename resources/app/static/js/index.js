@@ -5,9 +5,22 @@ let index = {
         asticode.modaler.init();
         asticode.notifier.init();
 
+        asticode.loader.show();
+
         // Wait for astilectron to be ready
         document.addEventListener('astilectron-ready', function() {
-            alert("Ready!")
+            document.getElementById('hw').innerText = 'READY!';
+
+            asticode.loader.hide();
+
+            astilectron.sendMessage({"name": "My Message", "paylod": "Wut!!!"});
+
+            document.onkeypress(ev => {
+
+                if (ev.key === "F12") {
+                    astilectron.sendMessage({"name": "devtools", "paylod": "Wut!!!"});
+                }
+            })
         })
     },
 };
