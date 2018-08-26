@@ -1,6 +1,7 @@
 package dockerHandler
 
 import (
+	"github.com/johnnadratowski/golang-neo4j-bolt-driver/log"
 	"github.com/pawmot/kabel/sniffer"
 	"github.com/docker/docker/api/types"
 	"time"
@@ -52,13 +53,33 @@ func (a *Actor) Connect(endpoint string) error {
 				errC <- err
 			} else {
 				a.api = api
-				close(errC)
+				ver, err := a.getServerVersionWithRetry()
+				if err != nil {
+					errC <- err
+				} else {
+					log.Info(ver)
+					close(errC)
+				}
 			}
 		} else {
 			errC <- errors.New("already connected")
 		}
 	}
 	return <-errC
+}
+
+func (a *Actor) getServerVersionWithRetry() (types.Version, error) {
+	var errMem error
+	for i := 0; i < 3; i++ {
+		ver, err := a.api.ServerVersion(context.Background())
+		if err == nil {
+			return ver, nil
+		} else {
+			errMem = err
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	return types.Version{}, errMem
 }
 
 func (a *Actor) Close() error {

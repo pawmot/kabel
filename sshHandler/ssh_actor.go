@@ -1,13 +1,15 @@
 package sshHandler
 
 import (
+	"errors"
+	"fmt"
 	"github.com/pawmot/kabel/sniffer"
 	"github.com/phayes/freeport"
 	"log"
-	"strconv"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"syscall"
-	"errors"
 )
 
 type state int
@@ -15,6 +17,10 @@ type state int
 const (
 	disconnected state = iota
 	connected
+)
+
+var (
+	urnRegexp = regexp.MustCompile("^[a-z]*://(?P<urn>.*)$")
 )
 
 type Actor struct {
@@ -43,12 +49,12 @@ func (a *Actor) handleMessages() {
 	}
 }
 
-func (a *Actor) CreateTunnel(remoteSpec string) (local sniffer.SshTunnelLocalPort, err error) {
+func (a *Actor) CreateTunnel(remoteSpec string, dockerEndpoint string) (local sniffer.SshTunnelLocalPort, err error) {
 	portC := make(chan int)
 	errC := make(chan error)
 	a.actionC <- func() {
 		if a.state == disconnected {
-			p, err := a.tunnel(remoteSpec)
+			p, err := a.tunnel(remoteSpec, dockerEndpoint)
 			if err != nil {
 				errC <- err
 			} else {
@@ -83,7 +89,7 @@ func (a *Actor) Close() error {
 	return <-errC
 }
 
-func (a *Actor) tunnel(remoteSpec string) (int, error) {
+func (a *Actor) tunnel(remoteSpec string, dockerEndpoint string) (int, error) {
 	localPort, err := freeport.GetFreePort()
 	if err != nil {
 		return -1, err
@@ -93,8 +99,11 @@ func (a *Actor) tunnel(remoteSpec string) (int, error) {
 	// TODO use golang ssh client if possible
 	// TODO allow for password access
 	// TODO allow ssh port setting
-	// TODO allow docker socket setting
-	cmd := exec.Command("/usr/bin/ssh", "-Llocalhost:"+strconv.Itoa(localPort)+":/var/run/docker.sock", remoteSpec, "-N")
+	match := urnRegexp.FindStringSubmatch(dockerEndpoint)
+	if match == nil {
+		return -1, errors.New(fmt.Sprintf("cannot extract a URN from the docker endpoint: %s", dockerEndpoint))
+	}
+	cmd := exec.Command("/usr/bin/ssh", "-Llocalhost:"+strconv.Itoa(localPort)+":" + match[1], remoteSpec, "-N")
 	err = cmd.Start()
 	if err != nil {
 		return -1, err

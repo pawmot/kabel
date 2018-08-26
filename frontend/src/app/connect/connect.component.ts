@@ -46,10 +46,11 @@ export class ConnectComponent implements OnInit {
     this.astilectron.sendMessage({
       name: "connection_spec",
       payload: {
-        sshUserAndHostname: this.getSshUserAndHostnameFormControl().value,
+        sshUserAndHostname: this.getUseSshFormControl().value ? this.getSshUserAndHostnameFormControl().value : '',
         dockerHost: this.getDockerHostFormControl().value
       }
-    }, () => {
+    }, (msg) => {
+      console.log(msg)
     });
   }
 

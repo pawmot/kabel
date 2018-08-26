@@ -11,7 +11,7 @@ import (
 type SshTunnelLocalPort int
 
 type SshClient interface {
-	CreateTunnel(remoteSpec string) (local SshTunnelLocalPort, err error)
+	CreateTunnel(remoteSpec string, dockerEndpoint string) (local SshTunnelLocalPort, err error)
 	Close() error
 }
 

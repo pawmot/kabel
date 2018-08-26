@@ -9,7 +9,7 @@ export interface AstilectronMessage {
 }
 
 export interface Astilectron {
-  sendMessage(message: AstilectronMessage, callback: (AstilectronMessage) => void)
+  sendMessage(message: AstilectronMessage, callback: (msg: AstilectronMessage) => void)
 }
 
 export const ASTILECTRON_TOKEN = new InjectionToken("ASTILECTRON_TOKEN", {

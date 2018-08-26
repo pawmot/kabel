@@ -33,18 +33,18 @@ func (sa *Actor) Connect(request ConnectionRequest) (ConnectionResponse, error) 
 		var effectiveEndpoint string
 		if spec.sshTunnelSpec != "" {
 			// TODO handle password
-			local, err := sa.sshClient.CreateTunnel(spec.sshTunnelSpec)
+			local, err := sa.sshClient.CreateTunnel(spec.sshTunnelSpec, spec.dockerEndpoint)
 			if err != nil {
 				errC <- err
 				return
 			}
 
-			effectiveEndpoint = fmt.Sprintf("http://localhost:%d", local)
+			effectiveEndpoint = fmt.Sprintf("tcp://localhost:%d", local)
 		} else {
 			effectiveEndpoint = spec.dockerEndpoint
 		}
 
-		err := sa.dockerIface.Connect(effectiveEndpoint)
+		err := sa.dockerConnectWithRetry(effectiveEndpoint, 3, 500 * time.Millisecond)
 		if err != nil {
 			sa.close()
 			errC <- err
@@ -60,6 +60,22 @@ func (sa *Actor) Connect(request ConnectionRequest) (ConnectionResponse, error) 
 	case err := <-errC:
 		return Error, err
 	}
+}
+
+func (sa *Actor) dockerConnectWithRetry(effectiveEndpoint string, maxRetries int, retryDelay time.Duration) error {
+	var errResult error = nil
+	for i := 0; i <= maxRetries; i++ {
+		err := sa.dockerIface.Connect(effectiveEndpoint)
+		if err == nil {
+			errResult = nil
+			break
+		} else {
+			errResult = err
+			time.Sleep(retryDelay)
+		}
+	}
+
+	return errResult
 }
 
 func (sa *Actor) PullImage() error {
