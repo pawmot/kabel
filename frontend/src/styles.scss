@@ -1,0 +1,24 @@
+@import '~@angular/material/theming';
+
+@include mat-core();
+
+$kabel-app-primary: mat-palette($mat-blue);
+$kabel-app-accent: mat-palette($mat-light-blue);
+$kabel-app-warn: mat-palette($mat-red);
+
+$kabel-app-theme: mat-dark-theme($kabel-app-primary, $kabel-app-accent, $kabel-app-warn);
+
+@include angular-material-theme($kabel-app-theme);
+
+html {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}

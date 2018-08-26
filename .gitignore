@@ -3,7 +3,9 @@
 !*/
 !LICENCE
 !Makefile
+!browserslist
 
 .idea
 /output
-bind_linux_amd64.go
+/resources/app
+bind_*.go

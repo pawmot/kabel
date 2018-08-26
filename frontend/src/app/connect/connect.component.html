@@ -1,0 +1,39 @@
+<div>
+  <form [formGroup]="form">
+    <section formGroupName="ssh">
+      <mat-checkbox
+        type="checkbox"
+        name="useSsh"
+        labelPosition="before"
+        formControlName="useSsh"
+        #useSsh>
+        Use SSH
+      </mat-checkbox>
+      <mat-form-field appearance="outline" floatLabel="always">
+        <mat-label>User and Hostname</mat-label>
+        <input
+          matInput
+          #sshUserAndHostname
+          name="sshUserAndHostname"
+          formControlName="sshUserAndHostname"
+          [required]="useSsh.checked"
+          [placeholder]="'user@hostname'">
+        <mat-error *ngIf="getSshUserAndHostnameFormControl().hasError('required')">
+          This value is <strong>required</strong>
+        </mat-error>
+      </mat-form-field>
+    </section>
+    <mat-form-field appearance="outline" floatLabel="always">
+      <mat-label>Docker engine hostname</mat-label>
+      <input
+        matInput
+        #dockerHost
+        name="dockerHost"
+        formControlName="dockerHost"
+        [placeholder]="'unix:///var/run/docker.sock'">
+    </mat-form-field>
+    <section>
+      <button mat-stroked-button color="primary" type="button" (click)="connect()">Connect</button>
+    </section>
+  </form>
+</div>
