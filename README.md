@@ -25,5 +25,5 @@ from the angular frontend app and bundle everything.
 
 Release a "production" artifact:
 * run `make bundle` to compile a production distribution of the angular app and bundle it with the go backend.
-* go to `output/linux-amd64` where you'll find the `Kabel` executable.f
+* go to `output/linux-amd64` where you'll find the `Kabel` executable.
  
